@@ -11,7 +11,7 @@ build() {
 
 test_all() {
   (cd "$ROOT" && go test ./src/fetch/...)
-  python3 -m unittest discover -s "$ROOT/tests/cli" -t "$ROOT/tests/cli" -p 'test_cli.py'
+  python3 -m unittest discover -s "$ROOT/tests/cli" -t "$ROOT/tests/cli" -p 'test_*.py'
 }
 
 case "${1:-}" in

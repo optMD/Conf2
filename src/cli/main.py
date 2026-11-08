@@ -1,6 +1,7 @@
-"""CLI apt-depgraph: параметры и прямые зависимости из Packages.gz."""
+"""CLI apt-depgraph: параметры, данные о зависимостях и обход графа."""
 
 import argparse
+import collections
 import dataclasses
 import os
 import re
@@ -15,6 +16,7 @@ PNG_SUFFIX = ".png"
 URL_PREFIXES = ("http://", "https://")
 REPO_PACKAGE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.+\-]+$")
 TEST_NODE_PATTERN = re.compile(r"^[A-Z]$")
+NODE_SEPARATOR = ":"
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 FETCH_BINARY = os.path.join(ROOT, "build", "bin", "fetch")
 FIELD_PACKAGE = "Package"
@@ -23,6 +25,7 @@ FIELD_SEPARATOR = ":"
 GROUP_SEPARATOR = ","
 ALT_SEPARATOR = "|"
 ARCH_SEPARATOR = ":"
+DIRECT_DEPTH = 1
 EXIT_CONFIG_ERROR = 2
 EXIT_RUNTIME_ERROR = 1
 
@@ -32,7 +35,7 @@ class ConfigError(ValueError):
 
 
 class PipelineError(RuntimeError):
-    """Ошибка при загрузке или разборе данных о зависимостях."""
+    """Ошибка при загрузке данных, разборе или обходе графа."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -198,19 +201,83 @@ def parse_packages(text):
     return graph
 
 
-def direct_dependencies(graph, package):
-    """Возвращает прямые зависимости пакета или ошибку, если его нет."""
+def parse_test_line(line, number):
+    """Разбирает строку «A: B C» в пару (узел, список зависимостей)."""
+    name, separator, rest = line.partition(NODE_SEPARATOR)
+    if not separator:
+        raise PipelineError(f"строка {number}: ожидается формат «A: B C»")
+    tokens = [name.strip()] + rest.split()
+    for token in tokens:
+        if not TEST_NODE_PATTERN.match(token):
+            raise PipelineError(
+                f"строка {number}: имя должно быть одной заглавной буквой: "
+                f"{token!r}"
+            )
+    return tokens[0], tokens[1:]
+
+
+def load_test_graph(path):
+    """Читает тестовый граф из файла и возвращает {узел: [зависимости]}."""
+    graph = {}
+    with open(path, encoding="utf-8") as handle:
+        for number, raw in enumerate(handle, start=1):
+            line = raw.strip()
+            if line:
+                node, deps = parse_test_line(line, number)
+                graph.setdefault(node, []).extend(deps)
+    if not graph:
+        raise PipelineError(f"тестовый граф пуст: {path}")
+    return graph
+
+
+def ensure_package(graph, package):
+    """Проверяет, что пакет есть в графе."""
     if package not in graph:
-        raise PipelineError(f"пакет не найден в индексе: {package}")
-    return graph[package]
+        raise PipelineError(f"пакет не найден: {package}")
 
 
-def run_direct_dependencies(config):
-    """Возвращает прямые зависимости пакета из репозитория."""
+def traverse(graph, root, max_depth=None):
+    """Обход в ширину без рекурсии.
+
+    Возвращает узлы в порядке обнаружения и рёбра (от, к). Уже посещённые
+    узлы не ставятся в очередь повторно, поэтому циклы завершаются.
+    """
+    depth = {root: 0}
+    edges = []
+    seen_edges = set()
+    queue = collections.deque([root])
+    while queue:
+        current = queue.popleft()
+        level = depth[current]
+        if max_depth is not None and level >= max_depth:
+            continue
+        for nxt in graph.get(current, []):
+            edge = (current, nxt)
+            if edge not in seen_edges:
+                seen_edges.add(edge)
+                edges.append(edge)
+            if nxt not in depth:
+                depth[nxt] = level + 1
+                queue.append(nxt)
+    return list(depth), edges
+
+
+def load_graph(config):
+    """Возвращает граф из тестового файла или из репозитория."""
     if config.mode == MODE_TEST:
-        raise PipelineError("тестовый режим появится на этапе 3")
-    graph = parse_packages(fetch_index(config.source))
-    return direct_dependencies(graph, config.package)
+        return load_test_graph(config.source)
+    return parse_packages(fetch_index(config.source))
+
+
+def find_dependencies(config):
+    """Возвращает зависимости корня без самого корня."""
+    if config.reverse:
+        raise PipelineError("обратные зависимости появятся на этапе 4")
+    graph = load_graph(config)
+    ensure_package(graph, config.package)
+    max_depth = DIRECT_DEPTH if config.direct else None
+    nodes, _ = traverse(graph, config.package, max_depth)
+    return [node for node in nodes if node != config.package]
 
 
 def main(argv=None):
@@ -222,8 +289,8 @@ def main(argv=None):
         print(f"ошибка: {error}", file=sys.stderr)
         return EXIT_CONFIG_ERROR
     try:
-        for dep in run_direct_dependencies(config):
-            print(dep)
+        for node in find_dependencies(config):
+            print(node)
     except PipelineError as error:
         print(f"ошибка: {error}", file=sys.stderr)
         return EXIT_RUNTIME_ERROR

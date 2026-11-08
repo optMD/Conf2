@@ -104,7 +104,7 @@ class ParsePackagesTest(unittest.TestCase):
         """Пакет, которого нет в индексе, даёт ошибку выполнения."""
         graph = cli.parse_packages(SAMPLE_INDEX)
         with self.assertRaises(cli.PipelineError):
-            cli.direct_dependencies(graph, "wget")
+            cli.ensure_package(graph, "wget")
 
 
 class MainTest(unittest.TestCase):
