@@ -6,11 +6,16 @@ export PYTHONPATH="$ROOT/src/cli"
 
 build() {
   mkdir -p "$ROOT/build/bin"
-  (cd "$ROOT" && go build -o "$ROOT/build/bin/fetch" ./src/fetch)
+  (cd "$ROOT" && go build -o "$ROOT/build/bin/unpack" ./src/unpack)
+  mkdir -p "$ROOT/build/java"
+  javac -d "$ROOT/build/java" "$ROOT/src/reverse/Reverse.java"
 }
 
 test_all() {
-  (cd "$ROOT" && go test ./src/fetch/...)
+  (cd "$ROOT" && go test ./src/unpack/...)
+  javac -d "$ROOT/build/java" "$ROOT/src/reverse/Reverse.java" \
+    "$ROOT/tests/reverse/ReverseTest.java"
+  java -cp "$ROOT/build/java" ReverseTest
   python3 -m unittest discover -s "$ROOT/tests/cli" -t "$ROOT/tests/cli" -p 'test_*.py'
 }
 

@@ -74,12 +74,18 @@ class TestGraphFileTest(unittest.TestCase):
             cli.load_test_graph(self.write_graph("\n\n"))
 
     def test_transitive_and_direct_dependencies(self):
-        """Без --direct выводятся все достижимые узлы, с --direct — только прямые."""
+        """Без --direct — все достижимые узлы, с --direct — только прямые."""
         path = self.write_graph("A: B\nB: C\n")
         full = cli.Config("A", path, cli.MODE_TEST, "g.png", False, False)
         direct = cli.Config("A", path, cli.MODE_TEST, "g.png", True, False)
         self.assertEqual(cli.find_dependencies(full), ["B", "C"])
         self.assertEqual(cli.find_dependencies(direct), ["B"])
+
+    def test_reverse_lists_dependents(self):
+        """С --reverse выводятся пакеты, которые зависят от корня."""
+        path = self.write_graph("A: B\nB: C\n")
+        config = cli.Config("C", path, cli.MODE_TEST, "g.png", False, True)
+        self.assertEqual(cli.find_dependencies(config), ["B", "A"])
 
     def test_unknown_package_is_an_error(self):
         """Пакета нет в тестовом графе — ошибка выполнения."""

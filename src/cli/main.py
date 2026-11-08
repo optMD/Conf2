@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.request
 
 MODE_REPO = "repo"
 MODE_TEST = "test"
@@ -18,7 +19,11 @@ REPO_PACKAGE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.+\-]+$")
 TEST_NODE_PATTERN = re.compile(r"^[A-Z]$")
 NODE_SEPARATOR = ":"
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-FETCH_BINARY = os.path.join(ROOT, "build", "bin", "fetch")
+UNPACK_BINARY = os.path.join(ROOT, "build", "bin", "unpack")
+HTTP_TIMEOUT = 120
+REVERSE_CLASSPATH = os.path.join(ROOT, "build", "java")
+REVERSE_CLASS = "Reverse"
+JAVA_COMMAND = "java"
 FIELD_PACKAGE = "Package"
 FIELDS_DEPENDS = ("Depends", "Pre-Depends")
 FIELD_SEPARATOR = ":"
@@ -136,11 +141,11 @@ def load_config(argv):
     )
 
 
-def run_command(args):
-    """Запускает внешнюю программу и возвращает её stdout."""
+def run_command(args, stdin_bytes=b""):
+    """Запускает программу с входом stdin_bytes и возвращает stdout как текст."""
     try:
         result = subprocess.run(
-            args, capture_output=True, text=True, check=False
+            args, input=stdin_bytes, capture_output=True, check=False
         )
     except OSError as error:
         raise PipelineError(
@@ -150,12 +155,17 @@ def run_command(args):
     if result.returncode != 0:
         message = result.stderr.strip() or f"{args[0]} завершился с ошибкой"
         raise PipelineError(message)
-    return result.stdout
+    return result.stdout.decode("utf-8")
 
 
-def fetch_index(url, binary=FETCH_BINARY):
-    """Скачивает Packages.gz через Go-загрузчик и возвращает его текст."""
-    return run_command([binary, url])
+def fetch_index(url):
+    """Скачивает Packages.gz по URL и возвращает его распакованный текст."""
+    try:
+        with urllib.request.urlopen(url, timeout=HTTP_TIMEOUT) as response:
+            packed = response.read()
+    except (OSError, ValueError) as error:
+        raise PipelineError(f"не удалось скачать {url}: {error}") from error
+    return run_command([UNPACK_BINARY], stdin_bytes=packed)
 
 
 def parse_dependency_group(group):
@@ -231,8 +241,11 @@ def load_test_graph(path):
 
 
 def ensure_package(graph, package):
-    """Проверяет, что пакет есть в графе."""
-    if package not in graph:
+    """Проверяет, что пакет есть в графе как узел или как зависимость."""
+    known = set(graph)
+    for deps in graph.values():
+        known.update(deps)
+    if package not in known:
         raise PipelineError(f"пакет не найден: {package}")
 
 
@@ -269,12 +282,26 @@ def load_graph(config):
     return parse_packages(fetch_index(config.source))
 
 
+def reverse_graph(graph):
+    """Обращает рёбра графа через Java-компонент и возвращает новый граф."""
+    lines = [f"{src} {dst}" for src, deps in graph.items() for dst in deps]
+    text = run_command(
+        [JAVA_COMMAND, "-cp", REVERSE_CLASSPATH, REVERSE_CLASS],
+        stdin_bytes=("\n".join(lines) + "\n").encode("utf-8"),
+    )
+    reversed_graph = {}
+    for line in text.splitlines():
+        src, dst = line.split()
+        reversed_graph.setdefault(src, []).append(dst)
+    return reversed_graph
+
+
 def find_dependencies(config):
-    """Возвращает зависимости корня без самого корня."""
-    if config.reverse:
-        raise PipelineError("обратные зависимости появятся на этапе 4")
+    """Возвращает зависимости корня (или обратные) без самого корня."""
     graph = load_graph(config)
     ensure_package(graph, config.package)
+    if config.reverse:
+        graph = reverse_graph(graph)
     max_depth = DIRECT_DEPTH if config.direct else None
     nodes, _ = traverse(graph, config.package, max_depth)
     return [node for node in nodes if node != config.package]
