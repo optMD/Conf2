@@ -9,28 +9,39 @@ import subprocess
 import sys
 import urllib.request
 
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
 MODE_REPO = "repo"
 MODE_TEST = "test"
 MODES = (MODE_REPO, MODE_TEST)
+
 DEFAULT_OUTPUT = "graph.png"
 PNG_SUFFIX = ".png"
+DIRECT_DEPTH = 1
+
 URL_PREFIXES = ("http://", "https://")
+HTTP_TIMEOUT = 120
 REPO_PACKAGE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.+\-]+$")
+
 TEST_NODE_PATTERN = re.compile(r"^[A-Z]$")
 NODE_SEPARATOR = ":"
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-UNPACK_BINARY = os.path.join(ROOT, "build", "bin", "unpack")
-HTTP_TIMEOUT = 120
-REVERSE_CLASSPATH = os.path.join(ROOT, "build", "java")
-REVERSE_CLASS = "Reverse"
-JAVA_COMMAND = "java"
+
 FIELD_PACKAGE = "Package"
 FIELDS_DEPENDS = ("Depends", "Pre-Depends")
 FIELD_SEPARATOR = ":"
 GROUP_SEPARATOR = ","
 ALT_SEPARATOR = "|"
 ARCH_SEPARATOR = ":"
-DIRECT_DEPTH = 1
+
+UNPACK_BINARY = os.path.join(ROOT, "build", "bin", "unpack")
+RENDER_BINARY = os.path.join(ROOT, "build", "bin", "render")
+DOT_BINARY = "dot"
+JAVA_COMMAND = "java"
+REVERSE_CLASSPATH = os.path.join(ROOT, "build", "java")
+REVERSE_CLASS = "Reverse"
+DOTWRAP_CLASSPATH = os.path.join(ROOT, "build", "dotwrap", "dotwrap.jar")
+DOTWRAP_CLASS = "dotwrap.DotWrapKt"
+
 EXIT_CONFIG_ERROR = 2
 EXIT_RUNTIME_ERROR = 1
 
@@ -142,7 +153,7 @@ def load_config(argv):
 
 
 def run_command(args, stdin_bytes=b""):
-    """Запускает программу с входом stdin_bytes и возвращает stdout как текст."""
+    """Запускает программу с stdin_bytes и возвращает stdout как текст."""
     try:
         result = subprocess.run(
             args, input=stdin_bytes, capture_output=True, check=False
@@ -296,15 +307,51 @@ def reverse_graph(graph):
     return reversed_graph
 
 
-def find_dependencies(config):
-    """Возвращает зависимости корня (или обратные) без самого корня."""
+def graph_lines(nodes, edges):
+    """Превращает узлы и рёбра в строки NODE/EDGE для компонента Rust."""
+    lines = [f"NODE {name}" for name in nodes]
+    lines.extend(f"EDGE {src} {dst}" for src, dst in edges)
+    return "\n".join(lines) + "\n"
+
+
+def to_dot(nodes, edges):
+    """Возвращает текст Graphviz DOT: Rust строит строки, Kotlin оборачивает."""
+    body = run_command(
+        [RENDER_BINARY], stdin_bytes=graph_lines(nodes, edges).encode("utf-8")
+    )
+    return run_command(
+        [JAVA_COMMAND, "-cp", DOTWRAP_CLASSPATH, DOTWRAP_CLASS],
+        stdin_bytes=body.encode("utf-8"),
+    )
+
+
+def render_png(dot_text, output):
+    """Сохраняет DOT рядом с PNG и вызывает dot для изображения."""
+    with open(os.path.splitext(output)[0] + ".dot", "w", encoding="utf-8") as h:
+        h.write(dot_text)
+    try:
+        subprocess.run(
+            [DOT_BINARY, "-Tpng", "-o", output],
+            input=dot_text.encode("utf-8"),
+            check=True,
+            capture_output=True,
+        )
+    except OSError as error:
+        raise PipelineError(f"не удалось запустить dot: {error}") from error
+    except subprocess.CalledProcessError as error:
+        message = error.stderr.decode("utf-8", "replace").strip()
+        raise PipelineError(f"dot завершился с ошибкой: {message}") from error
+
+
+def find_subgraph(config):
+    """Возвращает узлы без корня и рёбра обхода (или обратного) графа."""
     graph = load_graph(config)
     ensure_package(graph, config.package)
     if config.reverse:
         graph = reverse_graph(graph)
     max_depth = DIRECT_DEPTH if config.direct else None
-    nodes, _ = traverse(graph, config.package, max_depth)
-    return [node for node in nodes if node != config.package]
+    nodes, edges = traverse(graph, config.package, max_depth)
+    return [node for node in nodes if node != config.package], edges
 
 
 def main(argv=None):
@@ -316,8 +363,10 @@ def main(argv=None):
         print(f"ошибка: {error}", file=sys.stderr)
         return EXIT_CONFIG_ERROR
     try:
-        for node in find_dependencies(config):
+        nodes, edges = find_subgraph(config)
+        for node in nodes:
             print(node)
+        render_png(to_dot([config.package] + nodes, edges), config.output)
     except PipelineError as error:
         print(f"ошибка: {error}", file=sys.stderr)
         return EXIT_RUNTIME_ERROR

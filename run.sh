@@ -3,32 +3,26 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 export PYTHONPATH="$ROOT/src/cli"
+cd "$ROOT"
 
-build() {
-  mkdir -p "$ROOT/build/bin"
-  (cd "$ROOT" && go build -o "$ROOT/build/bin/unpack" ./src/unpack)
-  mkdir -p "$ROOT/build/java"
-  javac -d "$ROOT/build/java" "$ROOT/src/reverse/Reverse.java"
-}
-
-test_all() {
-  (cd "$ROOT" && go test ./src/unpack/...)
-  javac -d "$ROOT/build/java" "$ROOT/src/reverse/Reverse.java" \
-    "$ROOT/tests/reverse/ReverseTest.java"
-  java -cp "$ROOT/build/java" ReverseTest
-  python3 -m unittest discover -s "$ROOT/tests/cli" -t "$ROOT/tests/cli" -p 'test_*.py'
-}
+APT_FLAGS="--no-recommends --no-suggests --no-conflicts"
+APT_FLAGS="$APT_FLAGS --no-breaks --no-replaces --no-enhances"
 
 case "${1:-}" in
-  test)
-    build
-    test_all
+  build | test | clean)
+    make -s "$1"
     ;;
-  build)
-    build
+  apt-compare)
+    shift
+    make -s build
+    docker run --rm ubuntu:24.04 sh -c \
+      'apt-get update -qq >/dev/null 2>&1 && apt-cache depends '"$APT_FLAGS"' "$1"' \
+      sh "$1" \
+      | dotnet build/names/Names.dll \
+      | node src/uniq/uniq.js
     ;;
   *)
-    build
+    make -s build
     python3 "$ROOT/src/cli/main.py" "$@"
     ;;
 esac
