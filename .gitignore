@@ -1,0 +1,15 @@
+build/
+__pycache__/
+*.pyc
+.venv/
+target/
+*.class
+node_modules/
+bin/
+obj/
+*.png
+*.svg
+*.dot
+.idea/
+.vscode/
+.DS_Store
