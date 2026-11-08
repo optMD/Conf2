@@ -1,9 +1,10 @@
-"""CLI-инструмент визуализации графа зависимостей пакетов Ubuntu (apt)."""
+"""CLI apt-depgraph: параметры и прямые зависимости из Packages.gz."""
 
 import argparse
 import dataclasses
 import os
 import re
+import subprocess
 import sys
 
 MODE_REPO = "repo"
@@ -14,11 +15,24 @@ PNG_SUFFIX = ".png"
 URL_PREFIXES = ("http://", "https://")
 REPO_PACKAGE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.+\-]+$")
 TEST_NODE_PATTERN = re.compile(r"^[A-Z]$")
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+FETCH_BINARY = os.path.join(ROOT, "build", "bin", "fetch")
+FIELD_PACKAGE = "Package"
+FIELDS_DEPENDS = ("Depends", "Pre-Depends")
+FIELD_SEPARATOR = ":"
+GROUP_SEPARATOR = ","
+ALT_SEPARATOR = "|"
+ARCH_SEPARATOR = ":"
 EXIT_CONFIG_ERROR = 2
+EXIT_RUNTIME_ERROR = 1
 
 
 class ConfigError(ValueError):
     """Некорректное значение параметра командной строки."""
+
+
+class PipelineError(RuntimeError):
+    """Ошибка при загрузке или разборе данных о зависимостях."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -31,17 +45,6 @@ class Config:
     output: str
     direct: bool
     reverse: bool
-
-    def as_pairs(self):
-        """Возвращает пары «ключ, значение» для вывода."""
-        return [
-            ("package", self.package),
-            ("source", self.source),
-            ("mode", self.mode),
-            ("output", self.output),
-            ("direct", str(self.direct).lower()),
-            ("reverse", str(self.reverse).lower()),
-        ]
 
 
 def build_parser():
@@ -61,7 +64,7 @@ def build_parser():
         "--mode",
         choices=MODES,
         default=MODE_REPO,
-        help="repo — реальный репозиторий, test — граф из файла",
+        help="repo — реальный репозиторий, test — тестовый граф из файла",
     )
     parser.add_argument(
         "-o",
@@ -130,10 +133,84 @@ def load_config(argv):
     )
 
 
-def print_settings(config):
-    """Выводит параметры запуска в формате ключ-значение."""
-    for key, value in config.as_pairs():
-        print(f"{key}: {value}")
+def run_command(args):
+    """Запускает внешнюю программу и возвращает её stdout."""
+    try:
+        result = subprocess.run(
+            args, capture_output=True, text=True, check=False
+        )
+    except OSError as error:
+        raise PipelineError(
+            f"не удалось запустить {args[0]}: {error} "
+            "(соберите компоненты: ./run.sh build)"
+        ) from error
+    if result.returncode != 0:
+        message = result.stderr.strip() or f"{args[0]} завершился с ошибкой"
+        raise PipelineError(message)
+    return result.stdout
+
+
+def fetch_index(url, binary=FETCH_BINARY):
+    """Скачивает Packages.gz через Go-загрузчик и возвращает его текст."""
+    return run_command([binary, url])
+
+
+def parse_dependency_group(group):
+    """Возвращает имя первой альтернативы группы без версии и архитектуры."""
+    first = group.split(ALT_SEPARATOR, 1)[0].strip()
+    if not first:
+        return None
+    name = first.split()[0]
+    return name.split(ARCH_SEPARATOR, 1)[0]
+
+
+def parse_dependency_field(value):
+    """Разбирает поле Depends или Pre-Depends в список имён пакетов."""
+    names = []
+    for group in value.split(GROUP_SEPARATOR):
+        name = parse_dependency_group(group)
+        if name:
+            names.append(name)
+    return names
+
+
+def parse_packages(text):
+    """Читает индекс Packages и возвращает {пакет: [прямые зависимости]}."""
+    graph = {}
+    name = None
+    deps = []
+    for line in text.splitlines() + [""]:
+        if not line.strip():
+            if name is not None:
+                graph[name] = list(dict.fromkeys(deps))
+            name, deps = None, []
+            continue
+        if line[0] in " \t":
+            continue
+        key, separator, value = line.partition(FIELD_SEPARATOR)
+        if not separator:
+            continue
+        key = key.strip()
+        if key == FIELD_PACKAGE:
+            name = value.strip()
+        elif key in FIELDS_DEPENDS:
+            deps.extend(parse_dependency_field(value))
+    return graph
+
+
+def direct_dependencies(graph, package):
+    """Возвращает прямые зависимости пакета или ошибку, если его нет."""
+    if package not in graph:
+        raise PipelineError(f"пакет не найден в индексе: {package}")
+    return graph[package]
+
+
+def run_direct_dependencies(config):
+    """Возвращает прямые зависимости пакета из репозитория."""
+    if config.mode == MODE_TEST:
+        raise PipelineError("тестовый режим появится на этапе 3")
+    graph = parse_packages(fetch_index(config.source))
+    return direct_dependencies(graph, config.package)
 
 
 def main(argv=None):
@@ -144,7 +221,12 @@ def main(argv=None):
     except ConfigError as error:
         print(f"ошибка: {error}", file=sys.stderr)
         return EXIT_CONFIG_ERROR
-    print_settings(config)
+    try:
+        for dep in run_direct_dependencies(config):
+            print(dep)
+    except PipelineError as error:
+        print(f"ошибка: {error}", file=sys.stderr)
+        return EXIT_RUNTIME_ERROR
     return 0
 
 
