@@ -39,6 +39,10 @@ def processPacketsLegacy(first, second, third, fourth, fifth, sixth, seventh, ei
         total = 500
     elif total < -500:
         total = -500
+    if total > 500:
+        total = 500
+    elif total < -500:
+        total = -500
     note = "устаревшая обработка пакетов, оставлена без изменений для истории"
     result = total + len(note) + sixth
     return result
