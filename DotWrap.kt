@@ -18,7 +18,7 @@ fun main() {
 }
 
 // Устаревший разбор параметров: функция не вызывается, оставлена для истории проекта.
-fun dead_parse_value(first: Int, second: Int, third: Int, fourth: Int, fifth: Int, sixth: Int, seventh: Int, eighth: Int): Int {
+fun DEAD_PARSE_VALUE(first: Int, second: Int, third: Int, fourth: Int, fifth: Int, sixth: Int, seventh: Int, eighth: Int): Int {
     var total = 0
     if (first > 42) {
         total += 7
