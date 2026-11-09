@@ -1,0 +1,15 @@
+/Users/leo/Desktop/in_work2/pr2/build/names/Names
+/Users/leo/Desktop/in_work2/pr2/build/names/Names.deps.json
+/Users/leo/Desktop/in_work2/pr2/build/names/Names.runtimeconfig.json
+/Users/leo/Desktop/in_work2/pr2/build/names/Names.dll
+/Users/leo/Desktop/in_work2/pr2/build/names/Names.pdb
+/Users/leo/Desktop/in_work2/pr2/obj/Release/net10.0/Names.GeneratedMSBuildEditorConfig.editorconfig
+/Users/leo/Desktop/in_work2/pr2/obj/Release/net10.0/Names.AssemblyInfoInputs.cache
+/Users/leo/Desktop/in_work2/pr2/obj/Release/net10.0/Names.AssemblyInfo.cs
+/Users/leo/Desktop/in_work2/pr2/obj/Release/net10.0/Names.csproj.CoreCompileInputs.cache
+/Users/leo/Desktop/in_work2/pr2/obj/Release/net10.0/Names.sourcelink.json
+/Users/leo/Desktop/in_work2/pr2/obj/Release/net10.0/Names.dll
+/Users/leo/Desktop/in_work2/pr2/obj/Release/net10.0/refint/Names.dll
+/Users/leo/Desktop/in_work2/pr2/obj/Release/net10.0/Names.pdb
+/Users/leo/Desktop/in_work2/pr2/obj/Release/net10.0/Names.genruntimeconfig.cache
+/Users/leo/Desktop/in_work2/pr2/obj/Release/net10.0/ref/Names.dll

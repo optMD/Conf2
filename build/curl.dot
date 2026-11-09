@@ -1,0 +1,9 @@
+digraph deps {
+  "curl";
+  "libc6";
+  "libcurl4t64";
+  "zlib1g";
+  "curl" -> "libc6";
+  "curl" -> "libcurl4t64";
+  "curl" -> "zlib1g";
+}
